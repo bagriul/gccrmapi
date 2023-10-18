@@ -13,6 +13,7 @@ client = MongoClient('mongodb+srv://tsbgalcontract:mymongodb26@cluster0.kppkt.mo
 db = client['galcontract_crm']
 users_collection = db['users']
 clients_collection = db['clients']
+protocols_collection = db['protocols']
 
 
 @application.route('/', methods=['GET'])
@@ -241,6 +242,95 @@ def add_comment():
             response = jsonify({'message': 'User not found or comment not added'}), 404
 
         return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/protocols', methods=['POST'])
+def protocols():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    page = data.get('page', 1)  # Default to page 1 if not provided
+    per_page = data.get('per_page', 10)  # Default to 10 items per page if not provided
+
+    # Extract filter parameters from the request data
+    keyword = data.get('keyword')
+    code = data.get('code')
+    name = data.get('name')
+    telephone = data.get('telephone')
+    email = data.get('email')
+    register_date_start = data.get('register_date_start')
+    register_date_end = data.get('register_date_end')
+    create_date_start = data.get('create_date_start')
+    create_date_end = data.get('create_date_end')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        username = decoded_token['username']
+        # Add your logic to retrieve user information based on the username from the database
+        # For example, user_info = get_user_info(username)
+
+        # Construct the filter criteria for the MongoDB query
+        filter_criteria = {}
+        if keyword:
+            protocols_collection.create_index([("$**", "text")])
+            filter_criteria['$text'] = {'$search': keyword}
+        if code:
+            regex_pattern = f'.*{re.escape(code)}.*'
+            filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
+        if name:
+            protocols_collection.create_index([("$**", "text")])
+            filter_criteria['$text'] = {'$search': name}
+        if telephone:
+            regex_pattern = f'.*{re.escape(telephone)}.*'
+            filter_criteria['telephone'] = {'$regex': regex_pattern, '$options': 'i'}
+        if email:
+            regex_pattern = f'.*{re.escape(email)}.*'
+            filter_criteria['login'] = {'$regex': regex_pattern, '$options': 'i'}
+        if register_date_start or register_date_end:
+            try:
+                start_date = datetime.datetime.strptime(register_date_start, '%d-%m-%Y')
+            except TypeError:
+                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+            try:
+                end_date = datetime.datetime.strptime(register_date_end, '%d-%m-%Y')
+            except TypeError:
+                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+            filter_criteria['register_date'] = {"$gte": start_date, "$lte": end_date}
+        if create_date_start or create_date_end:
+            try:
+                start_date = datetime.datetime.strptime(create_date_start, '%d-%m-%Y')
+            except TypeError:
+                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+            try:
+                end_date = datetime.datetime.strptime(create_date_end, '%d-%m-%Y')
+            except TypeError:
+                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+
+        # Count the total number of clients that match the filter criteria
+        total_clients = protocols_collection.count_documents(filter_criteria)
+
+        # Paginate the query results using skip and limit, and apply filters
+        skip = (page - 1) * per_page
+        documents = list(protocols_collection.find(filter_criteria).skip(skip).limit(per_page))
+
+        # Calculate the range of clients being displayed
+        start_range = skip + 1
+        end_range = min(skip + per_page, total_clients)
+
+        # Serialize the documents using json_util from pymongo and specify encoding
+        response = Response(json_util.dumps({'protocols': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range}, ensure_ascii=False).encode('utf-8'),
+                            content_type='application/json;charset=utf-8')
+        return response, 200
     except jwt.ExpiredSignatureError:
         response = jsonify({'message': 'Token has expired'}), 401
         return response
