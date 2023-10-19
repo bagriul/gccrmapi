@@ -259,14 +259,28 @@ def protocols():
 
     # Extract filter parameters from the request data
     keyword = data.get('keyword')
+    auction_date_start = data.get('auction_date_start')
+    auction_date_end = data.get('auction_date_end')
+    tenderID = data.get('tenderID')
     code = data.get('code')
-    name = data.get('name')
-    telephone = data.get('telephone')
-    email = data.get('email')
-    register_date_start = data.get('register_date_start')
-    register_date_end = data.get('register_date_end')
-    create_date_start = data.get('create_date_start')
-    create_date_end = data.get('create_date_end')
+    newstatus = data.get('newstatus')
+    newprotokol_start = data.get('newprotokol_start')
+    newprotokol_end = data.get('newprotokol_end')
+    protocol_enddate_start = data.get('protocol_enddate_start')
+    protocol_enddate_end = data.get('protocol_enddate_end')
+    contract_enddate_start = data.get('contract_enddate_start')
+    contract_enddate_end = data.get('contract_enddate_end')
+
+    # Field to extract from MongoDB documents
+    field_name = 'newstatus'
+    # List to store unique values from the specified field
+    newstatus_list = []
+    # Loop through all documents in the collection
+    for document in protocols_collection.find():
+        # Check if the field exists in the document and if it's not already in the list
+        if field_name in document and document[field_name] not in newstatus_list:
+            # Add the field value to the list
+            newstatus_list.append(document[field_name])
 
     if not access_token:
         response = jsonify({'message': 'Access token is missing'}), 401
@@ -283,35 +297,52 @@ def protocols():
         if keyword:
             protocols_collection.create_index([("$**", "text")])
             filter_criteria['$text'] = {'$search': keyword}
+        if tenderID:
+            regex_pattern = f'.*{re.escape(tenderID)}.*'
+            filter_criteria['tenderID'] = {'$regex': regex_pattern, '$options': 'i'}
         if code:
             regex_pattern = f'.*{re.escape(code)}.*'
             filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
-        if name:
-            protocols_collection.create_index([("$**", "text")])
-            filter_criteria['$text'] = {'$search': name}
-        if telephone:
-            regex_pattern = f'.*{re.escape(telephone)}.*'
-            filter_criteria['telephone'] = {'$regex': regex_pattern, '$options': 'i'}
-        if email:
-            regex_pattern = f'.*{re.escape(email)}.*'
-            filter_criteria['login'] = {'$regex': regex_pattern, '$options': 'i'}
-        if register_date_start or register_date_end:
+        if newstatus:
+            regex_pattern = f'.*{re.escape(newstatus)}.*'
+            filter_criteria['newstatus'] = {'$regex': regex_pattern, '$options': 'i'}
+        if auction_date_start or auction_date_end:
             try:
-                start_date = datetime.datetime.strptime(register_date_start, '%d-%m-%Y')
+                start_date = datetime.datetime.strptime(auction_date_start, '%d-%m-%Y')
             except TypeError:
                 start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
             try:
-                end_date = datetime.datetime.strptime(register_date_end, '%d-%m-%Y')
+                end_date = datetime.datetime.strptime(auction_date_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
             filter_criteria['register_date'] = {"$gte": start_date, "$lte": end_date}
-        if create_date_start or create_date_end:
+        if newprotokol_start or newprotokol_end:
             try:
-                start_date = datetime.datetime.strptime(create_date_start, '%d-%m-%Y')
+                start_date = datetime.datetime.strptime(newprotokol_start, '%d-%m-%Y')
             except TypeError:
                 start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
             try:
-                end_date = datetime.datetime.strptime(create_date_end, '%d-%m-%Y')
+                end_date = datetime.datetime.strptime(newprotokol_end, '%d-%m-%Y')
+            except TypeError:
+                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+        if protocol_enddate_start or protocol_enddate_end:
+            try:
+                start_date = datetime.datetime.strptime(protocol_enddate_start, '%d-%m-%Y')
+            except TypeError:
+                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+            try:
+                end_date = datetime.datetime.strptime(protocol_enddate_end, '%d-%m-%Y')
+            except TypeError:
+                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+        if contract_enddate_start or contract_enddate_end:
+            try:
+                start_date = datetime.datetime.strptime(contract_enddate_start, '%d-%m-%Y')
+            except TypeError:
+                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+            try:
+                end_date = datetime.datetime.strptime(contract_enddate_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
             filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
@@ -328,7 +359,7 @@ def protocols():
         end_range = min(skip + per_page, total_clients)
 
         # Serialize the documents using json_util from pymongo and specify encoding
-        response = Response(json_util.dumps({'protocols': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range}, ensure_ascii=False).encode('utf-8'),
+        response = Response(json_util.dumps({'protocols': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range, 'newstatus_list': newstatus_list}, ensure_ascii=False).encode('utf-8'),
                             content_type='application/json;charset=utf-8')
         return response, 200
     except jwt.ExpiredSignatureError:
