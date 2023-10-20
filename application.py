@@ -370,5 +370,38 @@ def protocols():
         return response
 
 
+@application.route('/add_comment_protocols', methods=['POST'])
+def add_comment_protocols():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    protocol_id = data.get('id')
+    comment = data.get('comment')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        if not protocol_id or not comment:
+            response = jsonify({'message': 'Protocol ID or comment is missing'}), 400
+            return response
+
+        # Search for the user document by ID and update the 'comment' field
+        result = protocols_collection.update_one({'id': protocol_id}, {'$set': {'comment': comment}})
+
+        if result.modified_count == 1:
+            response = jsonify({'message': 'Comment added successfully'}), 200
+        else:
+            response = jsonify({'message': 'User not found or comment not added'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
 if __name__ == '__main__':
     application.run()
