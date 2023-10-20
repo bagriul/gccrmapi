@@ -315,7 +315,7 @@ def protocols():
                 end_date = datetime.datetime.strptime(auction_date_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['register_date'] = {"$gte": start_date, "$lte": end_date}
+            filter_criteria['auction_date'] = {"$gte": start_date, "$lte": end_date}
         if newprotokol_start or newprotokol_end:
             try:
                 start_date = datetime.datetime.strptime(newprotokol_start, '%d-%m-%Y')
@@ -325,7 +325,7 @@ def protocols():
                 end_date = datetime.datetime.strptime(newprotokol_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+            filter_criteria['newprotokol'] = {"$gte": start_date, "$lte": end_date}
         if protocol_enddate_start or protocol_enddate_end:
             try:
                 start_date = datetime.datetime.strptime(protocol_enddate_start, '%d-%m-%Y')
@@ -335,7 +335,7 @@ def protocols():
                 end_date = datetime.datetime.strptime(protocol_enddate_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+            filter_criteria['protocol_enddate'] = {"$gte": start_date, "$lte": end_date}
         if contract_enddate_start or contract_enddate_end:
             try:
                 start_date = datetime.datetime.strptime(contract_enddate_start, '%d-%m-%Y')
@@ -345,7 +345,7 @@ def protocols():
                 end_date = datetime.datetime.strptime(contract_enddate_end, '%d-%m-%Y')
             except TypeError:
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+            filter_criteria['contract_enddate'] = {"$gte": start_date, "$lte": end_date}
 
         # Count the total number of clients that match the filter criteria
         total_clients = protocols_collection.count_documents(filter_criteria)
