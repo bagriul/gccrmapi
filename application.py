@@ -14,6 +14,7 @@ db = client['galcontract_crm']
 users_collection = db['users']
 clients_collection = db['clients']
 protocols_collection = db['protocols']
+biprozorro_collection = db['biprozorro']
 
 
 @application.route('/', methods=['GET'])
@@ -382,12 +383,115 @@ def add_comment_protocols():
         return response
 
     try:
+        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
         if not protocol_id or not comment:
             response = jsonify({'message': 'Protocol ID or comment is missing'}), 400
             return response
 
         # Search for the user document by ID and update the 'comment' field
         result = protocols_collection.update_one({'id': protocol_id}, {'$set': {'comment': comment}})
+
+        if result.modified_count == 1:
+            response = jsonify({'message': 'Comment added successfully'}), 200
+        else:
+            response = jsonify({'message': 'User not found or comment not added'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/biprozorro', methods=['POST'])
+def biprozorro():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+    try:
+        # Verify the JWT token
+        decoded_token = jwt.decode(access_token, SECRET_KEY, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Expired token'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+    name = data.get('name')
+    code = data.get('code')
+    representative = data.get('representative')
+    phone = data.get('phone')
+    email = data.get('email')
+    auctions = data.get('auctions')
+    keyword = data.get('keyword')
+    page = data.get('page', 1)
+    per_page = data.get('per_page', 10)
+
+    filter_criteria = {}
+    if keyword:
+        biprozorro_collection.create_index([("$**", "text")])
+        filter_criteria['$text'] = {'$search': keyword}
+    if name:
+        regex_pattern = f'.*{re.escape(name)}.*'
+        filter_criteria['name'] = {'$regex': regex_pattern, '$options': 'i'}
+    if code:
+        regex_pattern = f'.*{re.escape(code)}.*'
+        filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
+    if representative:
+        regex_pattern = f'.*{re.escape(representative)}.*'
+        filter_criteria['representative'] = {'$regex': regex_pattern, '$options': 'i'}
+    if phone:
+        regex_pattern = f'.*{re.escape(phone)}.*'
+        filter_criteria['phone'] = {'$regex': regex_pattern, '$options': 'i'}
+    if email:
+        regex_pattern = f'.*{re.escape(email)}.*'
+        filter_criteria['email'] = {'$regex': regex_pattern, '$options': 'i'}
+    if auctions:
+        regex_pattern = f'.*{re.escape(auctions)}.*'
+        filter_criteria['auctions'] = {'$regex': regex_pattern, '$options': 'i'}
+
+    # Count the total number of clients that match the filter criteria
+    total_clients = biprozorro_collection.count_documents(filter_criteria)
+
+    # Paginate the query results using skip and limit, and apply filters
+    skip = (page - 1) * per_page
+    documents = list(biprozorro_collection.find(filter_criteria).skip(skip).limit(per_page))
+
+    # Calculate the range of clients being displayed
+    start_range = skip + 1
+    end_range = min(skip + per_page, total_clients)
+
+    # Serialize the documents using json_util from pymongo and specify encoding
+    response = Response(json_util.dumps(
+        {'clients': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range},
+        ensure_ascii=False).encode('utf-8'),
+                        content_type='application/json;charset=utf-8')
+    return response, 200
+
+
+@application.route('/add_comment_biprozorro', methods=['POST'])
+def add_comment_biprozorro():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    code = data.get('code')
+    comment = data.get('comment')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        if not code or not comment:
+            response = jsonify({'message': 'Code or comment is missing'}), 400
+            return response
+
+        # Search for the user document by ID and update the 'comment' field
+        result = biprozorro_collection.update_one({'code': code}, {'$set': {'comment': comment}})
 
         if result.modified_count == 1:
             response = jsonify({'message': 'Comment added successfully'}), 200
