@@ -2,9 +2,10 @@ from flask import Flask, request, jsonify, Response
 import jwt
 import datetime
 from pymongo import MongoClient
-from bson import json_util
+from bson import json_util, ObjectId
 from flask_cors import CORS
 import re
+from flask_mail import Mail, Message
 
 application = Flask(__name__)
 CORS(application)
@@ -15,6 +16,15 @@ users_collection = db['users']
 clients_collection = db['clients']
 protocols_collection = db['protocols']
 biprozorro_collection = db['biprozorro']
+mailing_search_collection = db['mailing_search']
+
+application.config['MAIL_SERVER']='smtp.gmail.com'
+application.config['MAIL_PORT'] = 465
+application.config['MAIL_USERNAME'] = 'bagriul@gmail.com'
+application.config['MAIL_PASSWORD'] = 'hxih utim ntwh ppuv'
+application.config['MAIL_USE_TLS'] = False
+application.config['MAIL_USE_SSL'] = True
+mail = Mail(application)
 
 
 @application.route('/', methods=['GET'])
@@ -138,6 +148,7 @@ def clients():
 
     # Extract filter parameters from the request data
     keyword = data.get('keyword')
+    comment = data.get('comment')
     code = data.get('code')
     name = data.get('name')
     telephone = data.get('telephone')
@@ -162,6 +173,9 @@ def clients():
         if keyword:
             clients_collection.create_index([("$**", "text")])
             filter_criteria['$text'] = {'$search': keyword}
+        if comment:
+            regex_pattern = f'.*{re.escape(comment)}.*'
+            filter_criteria['comment'] = {'$regex': regex_pattern, '$options': 'i'}
         if code:
             regex_pattern = f'.*{re.escape(code)}.*'
             filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
@@ -499,6 +513,78 @@ def add_comment_biprozorro():
             response = jsonify({'message': 'User not found or comment not added'}), 404
 
         return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/add_mailing_search')
+def add_mailing_search():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    link = data.get('link')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        is_present = mailing_search_collection.find_one({'link': link})
+        if is_present is None:
+            mailing_search_collection.insert_one({'link': link})
+            return jsonify({'message': True}), 200
+        else:
+            return jsonify({'message': False}), 409
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/delete_mailing_search')
+def delete_mailing_search():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    search_id = data.get('search_id')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        mailing_search_collection.delete_one({'_id': ObjectId(search_id)})
+        return jsonify({'message': True}), 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route("/send_mail", methods=['POST'])
+def send_mail():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    subject = data.get('subject')
+    recipients = data.get('recipients')
+    text = data.get('text')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        for recipient in recipients:
+            msg = Message(subject=subject, sender='bagriul@gmail.com', recipients=[recipient])
+            msg.body = text
+            mail.send(msg)
+        return jsonify({'message': True}), 200
     except jwt.ExpiredSignatureError:
         response = jsonify({'message': 'Token has expired'}), 401
         return response
