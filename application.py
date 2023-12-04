@@ -572,18 +572,38 @@ def delete_mailing_search():
 def mailing_search():
     data = request.get_json()
     access_token = data.get('access_token')
+    page = data.get('page', 1)  # Default to page 1 if not provided
+    limit = data.get('limit', 10)  # Default to 10 documents per page if not provided
 
     if not access_token:
         response = jsonify({'message': 'Access token is missing'}), 401
         return response
 
     try:
-        documents = list(mailing_search_collection.find())
+        # Calculate skip value based on the page and limit
+        skip = (page - 1) * limit
+
+        # Get total number of documents
+        total_documents = mailing_search_collection.count_documents({})
+
+        # Use the skip and limit values in the find query
+        documents = list(mailing_search_collection.find().skip(skip).limit(limit))
+
         for document in documents:
             document['_id'] = str(document['_id'])
-        response = Response(json_util.dumps(
-            {'documents': documents},
-            ensure_ascii=False).encode('utf-8'),
+
+        # Calculate start and end range
+        start_range = skip + 1
+        end_range = min(skip + limit, total_documents)
+
+        response_data = {
+            'documents': documents,
+            'total_documents': total_documents,
+            'start_range': start_range,
+            'end_range': end_range
+        }
+
+        response = Response(json_util.dumps(response_data, ensure_ascii=False).encode('utf-8'),
                             content_type='application/json;charset=utf-8')
         return response, 200
     except jwt.ExpiredSignatureError:
