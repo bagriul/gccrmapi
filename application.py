@@ -521,20 +521,21 @@ def add_comment_biprozorro():
         return response
 
 
-@application.route('/add_mailing_search')
+@application.route('/add_mailing_search', methods=['POST'])
 def add_mailing_search():
     data = request.get_json()
     access_token = data.get('access_token')
     link = data.get('link')
+    name = data.get('name')
 
     if not access_token:
         response = jsonify({'message': 'Access token is missing'}), 401
         return response
 
     try:
-        is_present = mailing_search_collection.find_one({'link': link})
+        is_present = mailing_search_collection.find_one({'link': link, 'name': name})
         if is_present is None:
-            mailing_search_collection.insert_one({'link': link})
+            mailing_search_collection.insert_one({'link': link, 'name': name})
             return jsonify({'message': True}), 200
         else:
             return jsonify({'message': False}), 409
@@ -546,7 +547,7 @@ def add_mailing_search():
         return response
 
 
-@application.route('/delete_mailing_search')
+@application.route('/delete_mailing_search', methods=['POST'])
 def delete_mailing_search():
     data = request.get_json()
     access_token = data.get('access_token')
@@ -559,6 +560,32 @@ def delete_mailing_search():
     try:
         mailing_search_collection.delete_one({'_id': ObjectId(search_id)})
         return jsonify({'message': True}), 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/mailing_search', methods=['POST'])
+def mailing_search():
+    data = request.get_json()
+    access_token = data.get('access_token')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        documents = list(mailing_search_collection.find())
+        for document in documents:
+            document['_id'] = str(document['_id'])
+        response = Response(json_util.dumps(
+            {'documents': documents},
+            ensure_ascii=False).encode('utf-8'),
+                            content_type='application/json;charset=utf-8')
+        return response, 200
     except jwt.ExpiredSignatureError:
         response = jsonify({'message': 'Token has expired'}), 401
         return response
