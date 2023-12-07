@@ -17,6 +17,7 @@ clients_collection = db['clients']
 protocols_collection = db['protocols']
 biprozorro_collection = db['biprozorro']
 mailing_search_collection = db['mailing_search']
+streams_collection = db['streams']
 
 application.config['MAIL_SERVER']='smtp.gmail.com'
 application.config['MAIL_PORT'] = 465
@@ -632,6 +633,75 @@ def send_mail():
             msg.body = text
             mail.send(msg)
         return jsonify({'message': True}), 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/new_mailing_list', methods=['POST'])
+def new_mailing_list():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    keyword = data.get('keyword')
+    stream = data.get('stream')
+    min_price = data.get('min_price')
+    max_price = data.get('max_price')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        filter_criteria = {}
+        if keyword:
+            protocols_collection.create_index([("$**", "text")])
+            filter_criteria['$text'] = {'$search': keyword}
+        if stream:
+            regex_pattern = f'.*{re.escape(stream)}.*'
+            filter_criteria['stream'] = {'$regex': regex_pattern, '$options': 'i'}
+        if min_price is not None and max_price is not None:
+            filter_criteria['price'] = {'$gte': min_price, '$lte': max_price}
+        elif min_price is not None:
+            filter_criteria['price'] = {'$gte': min_price}
+        elif max_price is not None:
+            filter_criteria['price'] = {'$lte': max_price}
+
+        documents = list(protocols_collection.find(filter_criteria))
+        email_list = []
+        for document in documents:
+            client = clients_collection.find_one({'code': document['code']})
+            email = client['login']
+            if email not in email_list:
+                email_list.append(email)
+
+        return jsonify({'emails': email_list}), 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/get_streams', methods=['POST'])
+def get_streams():
+    data = request.get_json()
+    access_token = data.get('access_token')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        documents = list(streams_collection.find())
+        response = Response(json_util.dumps(
+            {'streams': documents},
+            ensure_ascii=False).encode('utf-8'),
+                            content_type='application/json;charset=utf-8')
+        return response, 200
     except jwt.ExpiredSignatureError:
         response = jsonify({'message': 'Token has expired'}), 401
         return response
