@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, Response
 import jwt
 import datetime
-from pymongo import MongoClient
+from pymongo import MongoClient, DESCENDING
 from bson import json_util, ObjectId
 from flask_cors import CORS
 import re
@@ -215,7 +215,8 @@ def clients():
 
         # Paginate the query results using skip and limit, and apply filters
         skip = (page - 1) * per_page
-        documents = list(clients_collection.find(filter_criteria).skip(skip).limit(per_page))
+        sort_criteria = [('create_date', DESCENDING)]
+        documents = list(clients_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
@@ -368,7 +369,8 @@ def protocols():
 
         # Paginate the query results using skip and limit, and apply filters
         skip = (page - 1) * per_page
-        documents = list(protocols_collection.find(filter_criteria).skip(skip).limit(per_page))
+        sort_criteria = [('auction_date', DESCENDING)]
+        documents = list(protocols_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
