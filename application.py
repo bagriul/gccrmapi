@@ -218,6 +218,12 @@ def clients():
         sort_criteria = [('create_date', DESCENDING)]
         documents = list(clients_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
 
+        # Sorting logic
+        sort_by = data.get('sort_by')
+        if sort_by:
+            reverse_sort = data.get('reverse_sort', False)
+            documents = sorted(documents, key=lambda x: x.get(sort_by, 0), reverse=reverse_sort)
+
         # Calculate the range of clients being displayed
         start_range = skip + 1
         end_range = min(skip + per_page, total_clients)
@@ -287,6 +293,7 @@ def protocols():
     protocol_enddate_end = data.get('protocol_enddate_end')
     contract_enddate_start = data.get('contract_enddate_start')
     contract_enddate_end = data.get('contract_enddate_end')
+    short_name = data.get('short_name')
 
     # Field to extract from MongoDB documents
     field_name = 'newstatus'
@@ -314,6 +321,9 @@ def protocols():
         if keyword:
             protocols_collection.create_index([("$**", "text")])
             filter_criteria['$text'] = {'$search': keyword}
+        if short_name:
+            regex_pattern = f'.*{re.escape(short_name)}.*'
+            filter_criteria['short_name'] = {'$regex': regex_pattern, '$options': 'i'}
         if tenderID:
             regex_pattern = f'.*{re.escape(tenderID)}.*'
             filter_criteria['tenderID'] = {'$regex': regex_pattern, '$options': 'i'}
@@ -371,6 +381,12 @@ def protocols():
         skip = (page - 1) * per_page
         sort_criteria = [('auction_date', DESCENDING)]
         documents = list(protocols_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
+
+        # Sorting logic
+        sort_by = data.get('sort_by')
+        if sort_by:
+            reverse_sort = data.get('reverse_sort', False)
+            documents = sorted(documents, key=lambda x: x.get(sort_by, 0), reverse=reverse_sort)
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
