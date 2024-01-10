@@ -222,7 +222,24 @@ def clients():
         sort_by = data.get('sort_by')
         if sort_by:
             reverse_sort = data.get('reverse_sort', False)
-            documents = sorted(documents, key=lambda x: x.get(sort_by, 0), reverse=reverse_sort)
+
+            # Determine the type of the field values (assuming non-empty values are of the same type)
+            field_type = type(
+                next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
+
+            def sort_key(x):
+                value = x.get(sort_by)
+
+                # Handle empty values
+                if value in [None, '', [], {}]:  # Add other 'empty' indicators if needed
+                    if issubclass(field_type, datetime.datetime):
+                        return datetime.datetime.min if reverse_sort else datetime.datetime.max
+                    else:
+                        return float('-inf') if reverse_sort else float('inf')
+
+                return value
+
+            documents = sorted(documents, key=sort_key, reverse=reverse_sort)
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
@@ -386,7 +403,24 @@ def protocols():
         sort_by = data.get('sort_by')
         if sort_by:
             reverse_sort = data.get('reverse_sort', False)
-            documents = sorted(documents, key=lambda x: x.get(sort_by, 0), reverse=reverse_sort)
+
+            # Determine the type of the field values (assuming non-empty values are of the same type)
+            field_type = type(
+                next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
+
+            def sort_key(x):
+                value = x.get(sort_by)
+
+                # Handle empty values
+                if value in [None, '', [], {}]:  # Add other 'empty' indicators if needed
+                    if issubclass(field_type, datetime.datetime):
+                        return datetime.datetime.min if reverse_sort else datetime.datetime.max
+                    else:
+                        return float('-inf') if reverse_sort else float('inf')
+
+                return value
+
+            documents = sorted(documents, key=sort_key, reverse=reverse_sort)
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
