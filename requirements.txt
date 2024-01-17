@@ -1,4 +1,4 @@
-﻿blinker==1.6.3
+blinker==1.6.3
 cffi==1.16.0
 click==8.1.7
 colorama==0.4.6
@@ -17,3 +17,4 @@ werkzeug==3.0.0
 zipp==3.17.0
 gunicorn==21.2.0
 Flask-Mail==0.9.1
+requests
