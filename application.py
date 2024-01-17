@@ -6,6 +6,8 @@ from bson import json_util, ObjectId
 from flask_cors import CORS
 import re
 from flask_mail import Mail, Message
+import requests
+from bs4 import BeautifulSoup as bs
 
 application = Flask(__name__)
 CORS(application)
@@ -18,6 +20,7 @@ protocols_collection = db['protocols']
 biprozorro_collection = db['biprozorro']
 mailing_search_collection = db['mailing_search']
 streams_collection = db['streams']
+procuringEntity_auctions_collection = db['procuringEntity_auctions']
 
 application.config['MAIL_SERVER']='smtp.gmail.com'
 application.config['MAIL_PORT'] = 465
@@ -438,6 +441,72 @@ def protocols():
         return response
 
 
+@application.route('/users_auctions', methods=['POST'])
+def users_auctions():
+    data = request.get_json()
+    access_token = data.get('access_token')
+
+    # Extract filter parameters from the request data
+    code = data.get('code')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        username = decoded_token['username']
+        # Add your logic to retrieve user information based on the username from the database
+        # For example, user_info = get_user_info(username)
+
+        # Construct the filter criteria for the MongoDB query
+        filter_criteria = {}
+        filter_criteria_2 = {}
+        if code:
+            regex_pattern = f'.*{re.escape(code)}.*'
+            filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
+            filter_criteria_2['procuringEntity_id'] = {'$regex': regex_pattern, '$options': 'i'}
+
+        sort_criteria = [('auction_date', DESCENDING)]
+        documents = list(protocols_collection.find(filter_criteria).sort(sort_criteria))
+        documents_2 = list(procuringEntity_auctions_collection.find(filter_criteria_2).sort(sort_criteria))
+        documents = documents + documents_2
+
+        # Sorting logic
+        sort_by = data.get('sort_by')
+        if sort_by:
+            reverse_sort = data.get('reverse_sort', False)
+
+            # Determine the type of the field values (assuming non-empty values are of the same type)
+            field_type = type(
+                next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
+
+            def sort_key(x):
+                value = x.get(sort_by)
+
+                # Handle empty values
+                if value in [None, '', [], {}]:  # Add other 'empty' indicators if needed
+                    if issubclass(field_type, datetime.datetime):
+                        return datetime.datetime.min if reverse_sort else datetime.datetime.max
+                    else:
+                        return float('-inf') if reverse_sort else float('inf')
+
+                return value
+
+            documents = sorted(documents, key=sort_key, reverse=reverse_sort)
+
+        # Serialize the documents using json_util from pymongo and specify encoding
+        response = Response(json_util.dumps({'auctions': documents}, ensure_ascii=False).encode('utf-8'),
+                            content_type='application/json;charset=utf-8')
+        return response, 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
 @application.route('/add_comment_protocols', methods=['POST'])
 def add_comment_protocols():
     data = request.get_json()
@@ -736,6 +805,37 @@ def new_mailing_list():
     except jwt.InvalidTokenError:
         response = jsonify({'message': 'Invalid token'}), 401
         return response
+
+
+@application.route('/mailing_text', methods=['POST'])
+def mailing_text():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    tenderID = data.get('tenderID')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    def get_info_from_prozorro(tenderID):
+        page = requests.get(f"https://prozorro.sale/auction/{tenderID}/")
+        soup = bs(page.content, 'html.parser')
+        price_string = soup.find('span', class_='news-card__price-sum news-card__price-sum--large').text
+        price_cleaned = ''.join(c for c in price_string if c.isdigit() or c == ',')
+        price_cleaned = price_cleaned.replace(',', '.')
+        price = float(price_cleaned)
+        auction_name = soup.find('h3', class_='information-title').text
+        auction_date = soup.find_all('span', class_='auction-info__value')[2].text
+        return auction_name, price, auction_date
+
+    auction_name, price, auction_date = get_info_from_prozorro(tenderID)
+
+    text = (f"{auction_name}\n\n"
+            f"Початкова вартість – {price} грн.\n"
+            f"Дата аукціону – {auction_date}\n\n"
+            f"https://sales.tsbgalcontract.org.ua/auction/{tenderID}/")
+
+    return jsonify({'message': text}), 200
 
 
 @application.route('/get_streams', methods=['POST'])
