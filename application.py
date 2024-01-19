@@ -741,8 +741,7 @@ def send_mail():
     data = request.get_json()
     access_token = data.get('access_token')
     subject = data.get('subject')
-    #recipients = data.get('recipients')
-    recipients = ['o.lapida@gmail.com']
+    recipients = data.get('recipients')
     text = data.get('text')
 
     if not access_token:
