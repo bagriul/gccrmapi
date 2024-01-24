@@ -789,16 +789,16 @@ def new_mailing_list():
         if min_price is not None and max_price is not None:
             filter_criteria['$expr'] = {
                 '$and': [
-                    {'$gte': [{'$toDouble': '$price'}, min_price]},
-                    {'$lte': [{'$toDouble': '$price'}, max_price]}
+                    {'$gte': [{'$toDouble': '$value_amount'}, min_price]},
+                    {'$lte': [{'$toDouble': '$value_amount'}, max_price]}
                 ]
             }
         elif min_price is not None:
-            filter_criteria['$expr'] = {'$gte': [{'$toDouble': '$price'}, min_price]}
+            filter_criteria['$expr'] = {'$gte': [{'$toDouble': '$value_amount'}, min_price]}
         elif max_price is not None:
-            filter_criteria['$expr'] = {'$lte': [{'$toDouble': '$price'}, max_price]}
+            filter_criteria['$expr'] = {'$lte': [{'$toDouble': '$value_amount'}, max_price]}
 
-        documents = list(protocols_collection.find(filter_criteria))
+        documents = list(protocols_all_collection.find(filter_criteria))
         email_list = []
         for document in documents:
             client = clients_collection.find_one({'code': document['code']})
