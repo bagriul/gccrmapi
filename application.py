@@ -17,6 +17,7 @@ db = client['galcontract_crm']
 users_collection = db['users']
 clients_collection = db['clients']
 protocols_collection = db['protocols']
+protocols_all_collection = db['protocols_all']
 biprozorro_collection = db['biprozorro']
 mailing_search_collection = db['mailing_search']
 streams_collection = db['streams']
@@ -468,7 +469,7 @@ def users_auctions():
             filter_criteria_2['procuringEntity_id'] = {'$regex': regex_pattern, '$options': 'i'}
 
         sort_criteria = [('auction_date', DESCENDING)]
-        documents = list(protocols_collection.find(filter_criteria).sort(sort_criteria))
+        documents = list(protocols_all_collection.find(filter_criteria).sort(sort_criteria))
         documents_2 = list(procuringEntity_auctions_collection.find(filter_criteria_2).sort(sort_criteria))
         documents = documents + documents_2
 
