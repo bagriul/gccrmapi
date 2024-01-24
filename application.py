@@ -449,6 +449,8 @@ def users_auctions():
 
     # Extract filter parameters from the request data
     code = data.get('code')
+    if code == '':
+        code = ' '
 
     if not access_token:
         response = jsonify({'message': 'Access token is missing'}), 401
@@ -779,17 +781,22 @@ def new_mailing_list():
     try:
         filter_criteria = {}
         if keyword:
-            protocols_collection.create_index([("$**", "text")])
+            protocols_all_collection.create_index([("$**", "text")])
             filter_criteria['$text'] = {'$search': keyword}
         if stream:
             regex_pattern = f'.*{re.escape(stream)}.*'
             filter_criteria['stream'] = {'$regex': regex_pattern, '$options': 'i'}
         if min_price is not None and max_price is not None:
-            filter_criteria['price'] = {'$gte': min_price, '$lte': max_price}
+            filter_criteria['$expr'] = {
+                '$and': [
+                    {'$gte': [{'$toDouble': '$price'}, min_price]},
+                    {'$lte': [{'$toDouble': '$price'}, max_price]}
+                ]
+            }
         elif min_price is not None:
-            filter_criteria['price'] = {'$gte': min_price}
+            filter_criteria['$expr'] = {'$gte': [{'$toDouble': '$price'}, min_price]}
         elif max_price is not None:
-            filter_criteria['price'] = {'$lte': max_price}
+            filter_criteria['$expr'] = {'$lte': [{'$toDouble': '$price'}, max_price]}
 
         documents = list(protocols_collection.find(filter_criteria))
         email_list = []
