@@ -425,6 +425,16 @@ def protocols():
                 return value
 
             documents = sorted(documents, key=sort_key, reverse=reverse_sort)
+        else:
+            def custom_sort(document):
+                newstatus_value = document.get('newstatus')
+                if newstatus_value == "Очікується опублікування протоколу":
+                    return 0
+                else:
+                    return 1
+
+            # Sorting the documents using the custom sorting function
+            documents = sorted(documents, key=custom_sort)
 
         # Calculate the range of clients being displayed
         start_range = skip + 1
