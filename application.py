@@ -22,6 +22,7 @@ biprozorro_collection = db['biprozorro']
 mailing_search_collection = db['mailing_search']
 streams_collection = db['streams']
 procuringEntity_auctions_collection = db['procuringEntity_auctions']
+comments_collection = db['comments']
 
 application.config['MAIL_SERVER']='smtp.gmail.com'
 application.config['MAIL_PORT'] = 465
@@ -539,6 +540,12 @@ def add_comment_protocols():
 
         # Search for the user document by ID and update the 'comment' field
         result = protocols_collection.update_one({'id': protocol_id}, {'$set': {'comment': comment}})
+
+        is_comment = comments_collection.find_one({'protocol_id': protocol_id})
+        if is_comment is not None:
+            comments_collection.find_one_and_update({'protocol_id': protocol_id}, {'$set': {'comment': comment}})
+        elif is_comment is None:
+            comments_collection.insert_one({'protocol_id': protocol_id, 'comment': comment})
 
         if result.modified_count == 1:
             response = jsonify({'message': 'Comment added successfully'}), 200
