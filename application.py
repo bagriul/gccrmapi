@@ -441,6 +441,11 @@ def protocols():
         start_range = skip + 1
         end_range = min(skip + per_page, total_clients)
 
+        for document in documents:
+            is_present = comments_collection.find_one({'protocol_id': document['id']})
+            if is_present is not None:
+                document['comment'] = is_present['comment']
+
         # Serialize the documents using json_util from pymongo and specify encoding
         response = Response(json_util.dumps({'protocols': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range, 'newstatus_list': newstatus_list}, ensure_ascii=False).encode('utf-8'),
                             content_type='application/json;charset=utf-8')
