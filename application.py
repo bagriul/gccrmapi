@@ -626,11 +626,11 @@ def biprozorro():
         filter_criteria['auctions'] = {'$regex': regex_pattern, '$options': 'i'}
 
     # Count the total number of clients that match the filter criteria
-    total_clients = biprozorro_collection.count_documents(filter_criteria)
+    total_clients = biprozorro_test_collection.count_documents(filter_criteria)
 
     # Paginate the query results using skip and limit, and apply filters
     skip = (page - 1) * per_page
-    documents = list(biprozorro_collection.find(filter_criteria).skip(skip).limit(per_page))
+    documents = list(biprozorro_test_collection.find(filter_criteria).skip(skip).limit(per_page))
 
     # Calculate the range of clients being displayed
     start_range = skip + 1
