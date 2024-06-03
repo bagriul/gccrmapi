@@ -16,9 +16,10 @@ client = MongoClient('mongodb+srv://tsbgalcontract:mymongodb26@cluster0.kppkt.mo
 db = client['galcontract_crm']
 users_collection = db['users']
 clients_collection = db['clients']
-protocols_collection = db['protocols_test']
+protocols_collection = db['protocols']
 protocols_all_collection = db['protocols_all']
-biprozorro_collection = db['biprozorro_test']
+biprozorro_collection = db['biprozorro']
+biprozorro_test_collection = db['biprozorro_test']
 mailing_search_collection = db['mailing_search']
 streams_collection = db['streams']
 procuringEntity_auctions_collection = db['procuringEntity_auctions']
@@ -105,10 +106,10 @@ def login():
     if user:
         # Generate tokens
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=1440)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
             application.config['SECRET_KEY'], algorithm='HS256')
         refresh_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
@@ -131,7 +132,7 @@ def refresh():
 
         # Generate a new access token
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=1440)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
@@ -358,6 +359,8 @@ def protocols():
         if auction_date_start or auction_date_end:
             try:
                 start_date = datetime.datetime.strptime(auction_date_start, '%d-%m-%Y')
+                print(start_date)
+                print(type(start_date))
             except TypeError:
                 start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
             try:
@@ -513,6 +516,13 @@ def users_auctions():
                 return value
 
             documents = sorted(documents, key=sort_key, reverse=reverse_sort)
+
+        is_biprozorro = biprozorro_test_collection.find_one({'code': code})
+        if len(documents) == 0 and is_biprozorro is not None:
+            auctions = is_biprozorro['auctions']
+            documents = []
+            for auction in auctions:
+                documents.append({'tenderID': auction})
 
         # Serialize the documents using json_util from pymongo and specify encoding
         response = Response(json_util.dumps({'auctions': documents}, ensure_ascii=False).encode('utf-8'),
