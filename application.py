@@ -106,10 +106,10 @@ def login():
     if user:
         # Generate tokens
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
             application.config['SECRET_KEY'], algorithm='HS256')
         refresh_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
@@ -132,7 +132,7 @@ def refresh():
 
         # Generate a new access token
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
