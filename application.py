@@ -106,10 +106,10 @@ def login():
     if user:
         # Generate tokens
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
             application.config['SECRET_KEY'], algorithm='HS256')
         refresh_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=7)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
@@ -132,7 +132,7 @@ def refresh():
 
         # Generate a new access token
         access_token = jwt.encode(
-            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)},
+            {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
             application.config['SECRET_KEY'], algorithm='HS256')
 
         response = jsonify({'access_token': access_token, 'refresh_token': refresh_token}), 200
@@ -150,8 +150,8 @@ def refresh():
 def clients():
     data = request.get_json()
     access_token = data.get('access_token')
-    page = data.get('page', 1)  # Default to page 1 if not provided
-    per_page = data.get('per_page', 10)  # Default to 10 items per page if not provided
+    page = data.get('page', 1)
+    per_page = data.get('per_page', 10)
 
     # Extract filter parameters from the request data
     keyword = data.get('keyword')
@@ -164,16 +164,15 @@ def clients():
     register_date_end = data.get('register_date_end')
     create_date_start = data.get('create_date_start')
     create_date_end = data.get('create_date_end')
+    stream = data.get('stream')  # New stream filter
 
     if not access_token:
-        response = jsonify({'message': 'Access token is missing'}), 401
-        return response
+        return jsonify({'message': 'Access token is missing'}), 401
 
     try:
         decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
         username = decoded_token['username']
-        # Add your logic to retrieve user information based on the username from the database
-        # For example, user_info = get_user_info(username)
+        # Retrieve user information based on the username, if needed
 
         # Construct the filter criteria for the MongoDB query
         filter_criteria = {}
@@ -216,52 +215,50 @@ def clients():
                 end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
             filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
 
-        # Count the total number of clients that match the filter criteria
-        total_clients = clients_collection.count_documents(filter_criteria)
+        if stream:
+            # Find auctions that match the stream
+            auctions = protocols_all_collection.find(
+                {'stream': {'$regex': f'.*{re.escape(stream)}.*', '$options': 'i'}})
+            auction_client_codes = [auction['code'] for auction in auctions]
 
-        # Paginate the query results using skip and limit, and apply filters
+            # Filter clients based on these auction codes
+            filter_criteria['code'] = {'$in': auction_client_codes}
+
+        total_clients = clients_collection.count_documents(filter_criteria)
         skip = (page - 1) * per_page
         sort_criteria = [('create_date', DESCENDING)]
         documents = list(clients_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
 
-        # Sorting logic
         sort_by = data.get('sort_by')
         if sort_by:
             reverse_sort = data.get('reverse_sort', False)
 
-            # Determine the type of the field values (assuming non-empty values are of the same type)
             field_type = type(
                 next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
 
             def sort_key(x):
                 value = x.get(sort_by)
-
-                # Handle empty values
-                if value in [None, '', [], {}]:  # Add other 'empty' indicators if needed
+                if value in [None, '', [], {}]:
                     if issubclass(field_type, datetime.datetime):
                         return datetime.datetime.min if reverse_sort else datetime.datetime.max
                     else:
                         return float('-inf') if reverse_sort else float('inf')
-
                 return value
 
             documents = sorted(documents, key=sort_key, reverse=reverse_sort)
 
-        # Calculate the range of clients being displayed
         start_range = skip + 1
         end_range = min(skip + per_page, total_clients)
 
-        # Serialize the documents using json_util from pymongo and specify encoding
-        response = Response(json_util.dumps({'clients': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range}, ensure_ascii=False).encode('utf-8'),
+        response = Response(json_util.dumps(
+            {'clients': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range},
+            ensure_ascii=False).encode('utf-8'),
                             content_type='application/json;charset=utf-8')
         return response, 200
     except jwt.ExpiredSignatureError:
-        response = jsonify({'message': 'Token has expired'}), 401
-        return response
+        return jsonify({'message': 'Token has expired'}), 401
     except jwt.InvalidTokenError:
-        response = jsonify({'message': 'Invalid token'}), 401
-        return response
-
+        return jsonify({'message': 'Invalid token'}), 401
 
 @application.route('/add_comment', methods=['POST'])
 def add_comment():
@@ -626,11 +623,11 @@ def biprozorro():
         filter_criteria['auctions'] = {'$regex': regex_pattern, '$options': 'i'}
 
     # Count the total number of clients that match the filter criteria
-    total_clients = biprozorro_test_collection.count_documents(filter_criteria)
+    total_clients = biprozorro_collection.count_documents(filter_criteria)
 
     # Paginate the query results using skip and limit, and apply filters
     skip = (page - 1) * per_page
-    documents = list(biprozorro_test_collection.find(filter_criteria).skip(skip).limit(per_page))
+    documents = list(biprozorro_collection.find(filter_criteria).skip(skip).limit(per_page))
 
     # Calculate the range of clients being displayed
     start_range = skip + 1
@@ -903,4 +900,4 @@ def get_streams():
 
 
 if __name__ == '__main__':
-    application.run()
+    application.run(port=5000)
