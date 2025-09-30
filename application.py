@@ -9,8 +9,23 @@ from flask_mail import Mail, Message
 import requests
 from bs4 import BeautifulSoup as bs
 
+
+ALLOWED_ORIGINS = {
+    "https://galcontract-crm-front-ce5m4.ondigitalocean.app",
+}
+
+CORS(
+    application,
+    resources={r"/*": {
+        "origins": list(ALLOWED_ORIGINS),
+        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "supports_credentials": True,
+        "max_age": 86400,
+    }},
+)
+
 application = Flask(__name__)
-CORS(application)
 application.config['SECRET_KEY'] = 'gcsecretkey'
 client = MongoClient('mongodb+srv://tsbgalcontract:mymongodb26@cluster0.kppkt.mongodb.net/test?authSource=admin&replicaSet=atlas-8jvx35-shard-0&readPreference=primary&appname=MongoDB%20Compass&ssl=true')
 db = client['galcontract_crm']
@@ -32,6 +47,25 @@ application.config['MAIL_PASSWORD'] = 'hxih utim ntwh ppuv'
 application.config['MAIL_USE_TLS'] = False
 application.config['MAIL_USE_SSL'] = True
 mail = Mail(application)
+
+
+@application.after_request
+def add_cors_headers(resp):
+    # завжди додати CORS для дозволених оріджинів, навіть на 4xx/5xx
+    origin = request.headers.get("Origin")
+    if origin in ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    return resp
+
+
+# миттєва відповідь на preflight
+@application.route("/__preflight__", methods=["OPTIONS"])
+def preflight_probe():
+    return ("", 204)
 
 
 @application.route('/', methods=['GET'])
@@ -293,8 +327,10 @@ def add_comment():
         return response
 
 
-@application.route('/protocols', methods=['POST'])
+@application.route('/protocols', methods=['POST', 'OPTIONS'])
 def protocols():
+    if request.method == 'OPTIONS':
+        return ("", 204)
     data = request.get_json()
     access_token = data.get('access_token')
     page = data.get('page', 1)  # Default to page 1 if not provided
@@ -901,3 +937,4 @@ def get_streams():
 
 if __name__ == '__main__':
     application.run(port=5000)
+
