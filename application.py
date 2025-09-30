@@ -40,6 +40,26 @@ streams_collection = db['streams']
 procuringEntity_auctions_collection = db['procuringEntity_auctions']
 comments_collection = db['comments']
 
+# --- Mongo indexes (run once on startup) ---
+# Дати/сортування
+protocols_collection.create_index([("auction_date", -1)])
+protocols_collection.create_index([("newprotokol", -1)])
+protocols_collection.create_index([("protocol_enddate", -1)])
+protocols_collection.create_index([("contract_enddate", -1)])
+# Точні/префіксні фільтри
+protocols_collection.create_index([("short_name", 1)])
+protocols_collection.create_index([("tenderID", 1)])
+protocols_collection.create_index([("code", 1)])
+protocols_collection.create_index([("newstatus", 1)])
+# Текстовий пошук (за потреби; краще зробити його цільовим, ніж на $**)
+# Уникай створення $** текстового індексу на кожному запиті!
+try:
+    protocols_collection.create_index([("short_name", "text"), ("tenderID", "text"), ("code", "text")], name="txt_main")
+except Exception:
+    pass
+# Коментарі
+comments_collection.create_index([("protocol_id", 1)])
+
 application.config['MAIL_SERVER']='smtp.gmail.com'
 application.config['MAIL_PORT'] = 465
 application.config['MAIL_USERNAME'] = 'bagriul@gmail.com'
@@ -47,6 +67,23 @@ application.config['MAIL_PASSWORD'] = 'hxih utim ntwh ppuv'
 application.config['MAIL_USE_TLS'] = False
 application.config['MAIL_USE_SSL'] = True
 mail = Mail(application)
+
+
+def _parse_range(d1, d2, fmt='%d-%m-%Y', min_default='01-01-2000', max_default='01-01-3000'):
+    try:
+        start = datetime.datetime.strptime(d1, fmt) if d1 else datetime.datetime.strptime(min_default, fmt)
+    except Exception:
+        start = datetime.datetime.strptime(min_default, fmt)
+    try:
+        end = datetime.datetime.strptime(d2, fmt) if d2 else datetime.datetime.strptime(max_default, fmt)
+    except Exception:
+        end = datetime.datetime.strptime(max_default, fmt)
+    return {"$gte": start, "$lte": end}
+
+
+def _safe_regex(term):
+    # екрануємо і шукаємо “містить” (case-insensitive)
+    return {"$regex": re.escape(term), "$options": "i"} if term else None
 
 
 @application.after_request
@@ -331,167 +368,151 @@ def add_comment():
 def protocols():
     if request.method == 'OPTIONS':
         return ("", 204)
-    data = request.get_json()
-    access_token = data.get('access_token')
-    page = data.get('page', 1)  # Default to page 1 if not provided
-    per_page = data.get('per_page', 10)  # Default to 10 items per page if not provided
 
-    # Extract filter parameters from the request data
+    data = request.get_json(silent=True) or {}
+    access_token = data.get('access_token')
+    if not access_token:
+        return jsonify({'message': 'Access token is missing'}), 401
+
+    try:
+        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return jsonify({'message': 'Token has expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'message': 'Invalid token'}), 401
+
+    # ---- Параметри пагінації/сорту ----
+    page = max(int(data.get('page', 1)), 1)
+    per_page = int(data.get('per_page', 50))
+    per_page = max(1, min(per_page, 200))  # хард-ліміт, щоб не скидати сервер
+    skip = (page - 1) * per_page
+
+    sort_by = data.get('sort_by')              # наприклад "auction_date"
+    reverse_sort = bool(data.get('reverse_sort', False))
+
+    # ---- Фільтри ----
     keyword = data.get('keyword')
-    auction_date_start = data.get('auction_date_start')
-    auction_date_end = data.get('auction_date_end')
     tenderID = data.get('tenderID')
     code = data.get('code')
     newstatus = data.get('newstatus')
+    short_name = data.get('short_name')
+
+    auction_date_start = data.get('auction_date_start')
+    auction_date_end = data.get('auction_date_end')
     newprotokol_start = data.get('newprotokol_start')
     newprotokol_end = data.get('newprotokol_end')
     protocol_enddate_start = data.get('protocol_enddate_start')
     protocol_enddate_end = data.get('protocol_enddate_end')
     contract_enddate_start = data.get('contract_enddate_start')
     contract_enddate_end = data.get('contract_enddate_end')
-    short_name = data.get('short_name')
 
-    # Field to extract from MongoDB documents
-    field_name = 'newstatus'
-    # List to store unique values from the specified field
-    newstatus_list = []
-    # Loop through all documents in the collection
-    for document in protocols_collection.find():
-        # Check if the field exists in the document and if it's not already in the list
-        if field_name in document and document[field_name] not in newstatus_list:
-            # Add the field value to the list
-            newstatus_list.append(document[field_name])
+    match = {}
 
-    if not access_token:
-        response = jsonify({'message': 'Access token is missing'}), 401
-        return response
+    # Текстовий пошук: використовуємо створений заздалегідь індекс "txt_main"
+    if keyword and keyword.strip():
+        match["$text"] = {"$search": keyword.strip()}
 
-    try:
-        decoded_token = jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
-        username = decoded_token['username']
-        # Add your logic to retrieve user information based on the username from the database
-        # For example, user_info = get_user_info(username)
+    # Стрічкові фільтри (regex із індексами на полях)
+    if short_name:
+        match["short_name"] = _safe_regex(short_name)
+    if tenderID:
+        match["tenderID"] = _safe_regex(tenderID)
+    if code:
+        match["code"] = _safe_regex(code)
+    if newstatus:
+        match["newstatus"] = _safe_regex(newstatus)
 
-        # Construct the filter criteria for the MongoDB query
-        filter_criteria = {}
-        if keyword:
-            protocols_collection.create_index([("$**", "text")])
-            filter_criteria['$text'] = {'$search': keyword}
-        if short_name:
-            regex_pattern = f'.*{re.escape(short_name)}.*'
-            filter_criteria['short_name'] = {'$regex': regex_pattern, '$options': 'i'}
-        if tenderID:
-            regex_pattern = f'.*{re.escape(tenderID)}.*'
-            filter_criteria['tenderID'] = {'$regex': regex_pattern, '$options': 'i'}
-        if code:
-            regex_pattern = f'.*{re.escape(code)}.*'
-            filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
-        if newstatus:
-            regex_pattern = f'.*{re.escape(newstatus)}.*'
-            filter_criteria['newstatus'] = {'$regex': regex_pattern, '$options': 'i'}
-        if auction_date_start or auction_date_end:
-            try:
-                start_date = datetime.datetime.strptime(auction_date_start, '%d-%m-%Y')
-                print(start_date)
-                print(type(start_date))
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(auction_date_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['auction_date'] = {"$gte": start_date, "$lte": end_date}
-        if newprotokol_start or newprotokol_end:
-            try:
-                start_date = datetime.datetime.strptime(newprotokol_start, '%d-%m-%Y')
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(newprotokol_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['newprotokol'] = {"$gte": start_date, "$lte": end_date}
-        if protocol_enddate_start or protocol_enddate_end:
-            try:
-                start_date = datetime.datetime.strptime(protocol_enddate_start, '%d-%m-%Y')
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(protocol_enddate_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['protocol_enddate'] = {"$gte": start_date, "$lte": end_date}
-        if contract_enddate_start or contract_enddate_end:
-            try:
-                start_date = datetime.datetime.strptime(contract_enddate_start, '%d-%m-%Y')
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(contract_enddate_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['contract_enddate'] = {"$gte": start_date, "$lte": end_date}
+    # Діапазони дат
+    if auction_date_start or auction_date_end:
+        match["auction_date"] = _parse_range(auction_date_start, auction_date_end)
+    if newprotokol_start or newprotokol_end:
+        match["newprotokol"] = _parse_range(newprotokol_start, newprotokol_end)
+    if protocol_enddate_start or protocol_enddate_end:
+        match["protocol_enddate"] = _parse_range(protocol_enddate_start, protocol_enddate_end)
+    if contract_enddate_start or contract_enddate_end:
+        match["contract_enddate"] = _parse_range(contract_enddate_start, contract_enddate_end)
 
-        # Count the total number of clients that match the filter criteria
-        total_clients = protocols_collection.count_documents(filter_criteria)
+    # ---- Підрахунок загальної кількості (швидко, по індексах) ----
+    total_clients = protocols_collection.count_documents(match)
 
-        # Paginate the query results using skip and limit, and apply filters
-        skip = (page - 1) * per_page
-        sort_criteria = [('auction_date', DESCENDING)]
-        documents = list(protocols_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
+    # ---- Сортування в БД ----
+    # Базовий пріоритет: "Очікується опублікування протоколу" зверху
+    priority_expr = {
+        "$cond": [{"$eq": ["$newstatus", "Очікується опублікування протоколу"]}, 0, 1]
+    }
 
-        # Sorting logic
-        sort_by = data.get('sort_by')
-        if sort_by:
-            reverse_sort = data.get('reverse_sort', False)
+    sort_stage = {}
+    if sort_by:
+        # Якщо явно вказали поле — сортуємо за ним (і дублюємо пріоритет)
+        sort_stage["_priority"] = 1
+        sort_stage[sort_by] = -1 if not reverse_sort else 1
+        # щоб стабілізувати порядок:
+        sort_stage["_id"] = -1
+    else:
+        # дефолт: як було — пріоритет, потім за датою аукціону новіші зверху
+        sort_stage["_priority"] = 1
+        sort_stage["auction_date"] = -1
+        sort_stage["_id"] = -1
 
-            # Determine the type of the field values (assuming non-empty values are of the same type)
-            field_type = type(
-                next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
+    # ---- Проєкція (тільки потрібні поля) ----
+    projection = {
+        "_id": 0,               # не обов'язково віддавати ObjectId
+        "id": 1,
+        "short_name": 1,
+        "tenderID": 1,
+        "code": 1,
+        "newstatus": 1,
+        "auction_date": 1,
+        "newprotokol": 1,
+        "protocol_enddate": 1,
+        "contract_enddate": 1,
+        # додай тут рівно ті поля, що показуєш на фронті
+    }
 
-            def sort_key(x):
-                value = x.get(sort_by)
+    # ---- Pipeline: match → addFields(priority) → sort → skip/limit → project ----
+    pipeline = [
+        {"$match": match},
+        {"$addFields": {"_priority": priority_expr}},
+        {"$sort": sort_stage},
+        {"$skip": skip},
+        {"$limit": per_page},
+        {"$project": projection},
+    ]
 
-                # Handle empty values
-                if value in [None, '', [], {}]:  # Add other 'empty' indicators if needed
-                    if issubclass(field_type, datetime.datetime):
-                        return datetime.datetime.min if reverse_sort else datetime.datetime.max
-                    else:
-                        return float('-inf') if reverse_sort else float('inf')
+    docs = list(protocols_collection.aggregate(pipeline, allowDiskUse=True))
 
-                return value
+    # ---- Пакетне підтягування коментарів (без N+1) ----
+    proto_ids = [d.get("id") for d in docs if d.get("id") is not None]
+    comments_map = {}
+    if proto_ids:
+        for c in comments_collection.find({"protocol_id": {"$in": proto_ids}}, {"_id": 0, "protocol_id": 1, "comment": 1}):
+            comments_map[c["protocol_id"]] = c.get("comment")
+    for d in docs:
+        pid = d.get("id")
+        if pid in comments_map:
+            d["comment"] = comments_map[pid]
 
-            documents = sorted(documents, key=sort_key, reverse=reverse_sort)
-        else:
-            def custom_sort(document):
-                newstatus_value = document.get('newstatus')
-                if newstatus_value == "Очікується опублікування протоколу":
-                    return 0
-                else:
-                    return 1
+    # ---- Список унікальних newstatus (швидко) ----
+    newstatus_list = sorted([s for s in protocols_collection.distinct("newstatus") if s], key=str)
 
-            # Sorting the documents using the custom sorting function
-            documents = sorted(documents, key=custom_sort)
+    # ---- Діапазон відображення ----
+    start_range = skip + 1 if total_clients else 0
+    end_range = min(skip + per_page, total_clients)
 
-        # Calculate the range of clients being displayed
-        start_range = skip + 1
-        end_range = min(skip + per_page, total_clients)
-
-        for document in documents:
-            is_present = comments_collection.find_one({'protocol_id': document['id']})
-            if is_present is not None:
-                document['comment'] = is_present['comment']
-
-        # Serialize the documents using json_util from pymongo and specify encoding
-        response = Response(json_util.dumps({'protocols': documents, 'total_clients': total_clients, 'start_range': start_range, 'end_range': end_range, 'newstatus_list': newstatus_list}, ensure_ascii=False).encode('utf-8'),
-                            content_type='application/json;charset=utf-8')
-        return response, 200
-    except jwt.ExpiredSignatureError:
-        response = jsonify({'message': 'Token has expired'}), 401
-        return response
-    except jwt.InvalidTokenError:
-        response = jsonify({'message': 'Invalid token'}), 401
-        return response
+    # ---- Відповідь ----
+    payload = {
+        "protocols": docs,
+        "total_clients": total_clients,
+        "start_range": start_range,
+        "end_range": end_range,
+        "newstatus_list": newstatus_list,
+        "page": page,
+        "per_page": per_page,
+    }
+    return Response(
+        json_util.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        content_type="application/json;charset=utf-8"
+    ), 200
 
 
 @application.route('/users_auctions', methods=['POST'])
@@ -937,5 +958,6 @@ def get_streams():
 
 if __name__ == '__main__':
     application.run(port=5000)
+
 
 
