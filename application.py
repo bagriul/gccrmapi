@@ -476,7 +476,7 @@ def protocols():
         {"$sort": sort_stage},
         {"$skip": skip},
         {"$limit": per_page},
-        {"$project": projection},
+        {"$project": {"_priority": 0}},
     ]
 
     docs = list(protocols_collection.aggregate(pipeline, allowDiskUse=True))
@@ -958,6 +958,7 @@ def get_streams():
 
 if __name__ == '__main__':
     application.run(port=5000)
+
 
 
 
