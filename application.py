@@ -9,6 +9,7 @@ from flask_mail import Mail, Message
 import requests
 from bs4 import BeautifulSoup as bs
 
+application = Flask(__name__)
 
 ALLOWED_ORIGINS = {
     "https://galcontract-crm-front-ce5m4.ondigitalocean.app",
@@ -25,7 +26,6 @@ CORS(
     }},
 )
 
-application = Flask(__name__)
 application.config['SECRET_KEY'] = 'gcsecretkey'
 client = MongoClient('mongodb+srv://tsbgalcontract:mymongodb26@cluster0.kppkt.mongodb.net/test?authSource=admin&replicaSet=atlas-8jvx35-shard-0&readPreference=primary&appname=MongoDB%20Compass&ssl=true')
 db = client['galcontract_crm']
@@ -937,4 +937,5 @@ def get_streams():
 
 if __name__ == '__main__':
     application.run(port=5000)
+
 
