@@ -456,7 +456,7 @@ def protocols():
 
     # ---- Проєкція (тільки потрібні поля) ----
     projection = {
-        "_id": 0,               # не обов'язково віддавати ObjectId
+        "_id": 1,
         "id": 1,
         "short_name": 1,
         "tenderID": 1,
@@ -958,6 +958,7 @@ def get_streams():
 
 if __name__ == '__main__':
     application.run(port=5000)
+
 
 
 
