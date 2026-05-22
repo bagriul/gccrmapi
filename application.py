@@ -641,6 +641,7 @@ def protocols():
     protocol_enddate_end = data.get('protocol_enddate_end')
     contract_enddate_start = data.get('contract_enddate_start')
     contract_enddate_end = data.get('contract_enddate_end')
+    agent_id = data.get('agent_id')
 
     match = {}
 
@@ -667,6 +668,23 @@ def protocols():
         match["protocol_enddate"] = _parse_range(protocol_enddate_start, protocol_enddate_end)
     if contract_enddate_start or contract_enddate_end:
         match["contract_enddate"] = _parse_range(contract_enddate_start, contract_enddate_end)
+    if agent_id:
+        client_filter = {}
+        if agent_id == '__NO_AGENT__':
+            client_filter['agent_id'] = {'$in': ['', None]}
+        else:
+            client_filter['agent_id'] = agent_id
+        mapped_codes = [str(client.get('code')) for client in clients_collection.find(client_filter, {'code': 1}) if client.get('code') not in [None, '']]
+        if not mapped_codes:
+            match["code"] = {"$in": []}
+        elif code:
+            match["$and"] = [
+                {"code": _safe_regex(code)},
+                {"code": {"$in": mapped_codes}}
+            ]
+            match.pop("code", None)
+        else:
+            match["code"] = {"$in": mapped_codes}
 
     # ---- Підрахунок загальної кількості (швидко, по індексах) ----
     total_clients = protocols_collection.count_documents(match)
