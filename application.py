@@ -39,6 +39,7 @@ mailing_search_collection = db['mailing_search']
 streams_collection = db['streams']
 procuringEntity_auctions_collection = db['procuringEntity_auctions']
 comments_collection = db['comments']
+agents_collection = db['agents']
 
 # --- Mongo indexes (run once on startup) ---
 # Дати/сортування
@@ -237,6 +238,7 @@ def clients():
     create_date_end = data.get('create_date_end')
     stream = data.get('stream')  # New stream filter
     source = data.get('source')
+    agent_id = data.get('agent_id')
 
     if not access_token:
         return jsonify({'message': 'Access token is missing'}), 401
@@ -302,6 +304,10 @@ def clients():
                 {'source': {'$in': ['', None]}},
                 {'source': {'$exists': False}}
             ]
+        if agent_id and agent_id != '__NO_AGENT__':
+            filter_criteria['agent_id'] = agent_id
+        elif agent_id == '__NO_AGENT__':
+            filter_criteria['agent_id'] = {'$in': ['', None]}
 
         total_clients = clients_collection.count_documents(filter_criteria)
         skip = (page - 1) * per_page
@@ -407,6 +413,190 @@ def update_client_source():
         return response
     except jwt.InvalidTokenError:
         response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/update_client_agent', methods=['POST'])
+def update_client_agent():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    user_id = data.get('id')
+    agent_id = data.get('agent_id', '')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+
+        if user_id is None:
+            response = jsonify({'message': 'User ID is missing'}), 400
+            return response
+
+        if agent_id:
+            is_agent_exists = agents_collection.find_one({'_id': ObjectId(agent_id)})
+            if is_agent_exists is None:
+                response = jsonify({'message': 'Agent not found'}), 404
+                return response
+
+        result = clients_collection.update_one({'id': user_id}, {'$set': {'agent_id': agent_id}})
+        if result.matched_count == 1:
+            response = jsonify({'message': 'Agent updated successfully'}), 200
+        else:
+            response = jsonify({'message': 'User not found'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+    except Exception:
+        response = jsonify({'message': 'Invalid agent id'}), 400
+        return response
+
+
+@application.route('/agents_list', methods=['POST'])
+def agents_list():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    search = (data.get('search') or '').strip()
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        filter_criteria = {}
+        if search:
+            filter_criteria['name'] = {'$regex': f'.*{re.escape(search)}.*', '$options': 'i'}
+
+        agents = list(agents_collection.find(filter_criteria).sort('name', 1))
+        response = Response(json_util.dumps({'agents': agents}, ensure_ascii=False).encode('utf-8'),
+                            content_type='application/json;charset=utf-8')
+        return response, 200
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/agents_create', methods=['POST'])
+def agents_create():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    name = (data.get('name') or '').strip()
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        if not name:
+            response = jsonify({'message': 'Agent name is required'}), 400
+            return response
+
+        existing = agents_collection.find_one({'name': {'$regex': f'^{re.escape(name)}$', '$options': 'i'}})
+        if existing:
+            response = jsonify({'message': 'Agent already exists'}), 409
+            return response
+
+        now = datetime.datetime.utcnow()
+        agents_collection.insert_one({'name': name, 'created_at': now, 'updated_at': now})
+        response = jsonify({'message': 'Agent created successfully'}), 200
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/agents_update', methods=['POST'])
+def agents_update():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    agent_id = data.get('id')
+    name = (data.get('name') or '').strip()
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        if not agent_id or not name:
+            response = jsonify({'message': 'Agent ID or name is missing'}), 400
+            return response
+
+        result = agents_collection.update_one(
+            {'_id': ObjectId(agent_id)},
+            {'$set': {'name': name, 'updated_at': datetime.datetime.utcnow()}}
+        )
+        if result.matched_count == 1:
+            response = jsonify({'message': 'Agent updated successfully'}), 200
+        else:
+            response = jsonify({'message': 'Agent not found'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+    except Exception:
+        response = jsonify({'message': 'Invalid agent id'}), 400
+        return response
+
+
+@application.route('/agents_delete', methods=['POST'])
+def agents_delete():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    agent_id = data.get('id')
+    force = data.get('force', False)
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        if not agent_id:
+            response = jsonify({'message': 'Agent ID is missing'}), 400
+            return response
+
+        assigned_count = clients_collection.count_documents({'agent_id': agent_id})
+        if assigned_count > 0 and not force:
+            response = jsonify({
+                'message': 'Agent has assigned clients',
+                'requires_confirmation': True,
+                'assigned_clients': assigned_count
+            }), 409
+            return response
+
+        agents_collection.delete_one({'_id': ObjectId(agent_id)})
+        if assigned_count > 0:
+            clients_collection.update_many({'agent_id': agent_id}, {'$set': {'agent_id': ''}})
+
+        response = jsonify({'message': 'Agent deleted successfully'}), 200
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+    except Exception:
+        response = jsonify({'message': 'Invalid agent id'}), 400
         return response
 
 
