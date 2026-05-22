@@ -236,6 +236,7 @@ def clients():
     create_date_start = data.get('create_date_start')
     create_date_end = data.get('create_date_end')
     stream = data.get('stream')  # New stream filter
+    source = data.get('source')
 
     if not access_token:
         return jsonify({'message': 'Access token is missing'}), 401
@@ -294,6 +295,13 @@ def clients():
 
             # Filter clients based on these auction codes
             filter_criteria['code'] = {'$in': auction_client_codes}
+        if source in ['Внутрішня', 'Зовнішня']:
+            filter_criteria['source'] = source
+        elif source == 'Без джерела':
+            filter_criteria['$or'] = [
+                {'source': {'$in': ['', None]}},
+                {'source': {'$exists': False}}
+            ]
 
         total_clients = clients_collection.count_documents(filter_criteria)
         skip = (page - 1) * per_page
@@ -354,6 +362,44 @@ def add_comment():
             response = jsonify({'message': 'Comment added successfully'}), 200
         else:
             response = jsonify({'message': 'User not found or comment not added'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
+        return response
+
+
+@application.route('/update_client_source', methods=['POST'])
+def update_client_source():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    user_id = data.get('id')
+    source = data.get('source', '')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+
+        if user_id is None:
+            response = jsonify({'message': 'User ID is missing'}), 400
+            return response
+
+        allowed_sources = ['', 'Внутрішня', 'Зовнішня']
+        if source not in allowed_sources:
+            response = jsonify({'message': 'Invalid source value'}), 400
+            return response
+
+        result = clients_collection.update_one({'id': user_id}, {'$set': {'source': source}})
+        if result.matched_count == 1:
+            response = jsonify({'message': 'Source updated successfully'}), 200
+        else:
+            response = jsonify({'message': 'User not found'}), 404
 
         return response
     except jwt.ExpiredSignatureError:
