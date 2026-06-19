@@ -5,6 +5,8 @@ from pymongo import MongoClient, DESCENDING
 from bson import json_util, ObjectId
 from flask_cors import CORS
 import re
+import csv
+import io
 from flask_mail import Mail, Message
 import requests
 from bs4 import BeautifulSoup as bs
@@ -103,6 +105,221 @@ def _parse_range(d1, d2, fmt='%d-%m-%Y', min_default='01-01-2000', max_default='
 def _safe_regex(term):
     # екрануємо і шукаємо “містить” (case-insensitive)
     return {"$regex": re.escape(term), "$options": "i"} if term else None
+
+
+def _build_clients_filter_criteria(data):
+    keyword = data.get('keyword')
+    comment = data.get('comment')
+    code = data.get('code')
+    name = data.get('name')
+    telephone = data.get('telephone')
+    email = data.get('email')
+    register_date_start = data.get('register_date_start')
+    register_date_end = data.get('register_date_end')
+    create_date_start = data.get('create_date_start')
+    create_date_end = data.get('create_date_end')
+    stream = data.get('stream')
+    source = data.get('source')
+    status = data.get('status')
+    agent_id = data.get('agent_id')
+
+    filter_criteria = {}
+    missing_conditions = []
+
+    if keyword:
+        clients_collection.create_index([("$**", "text")])
+        filter_criteria['$text'] = {'$search': keyword}
+    if comment:
+        regex_pattern = f'.*{re.escape(comment)}.*'
+        filter_criteria['comment'] = {'$regex': regex_pattern, '$options': 'i'}
+    if code:
+        regex_pattern = f'.*{re.escape(code)}.*'
+        filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
+    if name:
+        clients_collection.create_index([("$**", "text")])
+        filter_criteria['$text'] = {'$search': name}
+    if telephone:
+        regex_pattern = f'.*{re.escape(telephone)}.*'
+        filter_criteria['telephone'] = {'$regex': regex_pattern, '$options': 'i'}
+    if email:
+        regex_pattern = f'.*{re.escape(email)}.*'
+        filter_criteria['login'] = {'$regex': regex_pattern, '$options': 'i'}
+    if register_date_start or register_date_end:
+        try:
+            start_date = datetime.datetime.strptime(register_date_start, '%d-%m-%Y')
+        except TypeError:
+            start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+        try:
+            end_date = datetime.datetime.strptime(register_date_end, '%d-%m-%Y')
+        except TypeError:
+            end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+        filter_criteria['register_date'] = {"$gte": start_date, "$lte": end_date}
+    if create_date_start or create_date_end:
+        try:
+            start_date = datetime.datetime.strptime(create_date_start, '%d-%m-%Y')
+        except TypeError:
+            start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
+        try:
+            end_date = datetime.datetime.strptime(create_date_end, '%d-%m-%Y')
+        except TypeError:
+            end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
+        filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
+
+    if stream:
+        auctions = protocols_all_collection.find(
+            {'stream': {'$regex': f'.*{re.escape(stream)}.*', '$options': 'i'}})
+        auction_client_codes = [auction['code'] for auction in auctions]
+        filter_criteria['code'] = {'$in': auction_client_codes}
+    if source in ['Внутрішня', 'Зовнішня']:
+        filter_criteria['source'] = source
+    elif source == 'Без джерела':
+        missing_conditions.append({
+            '$or': [
+                {'source': {'$in': ['', None]}},
+                {'source': {'$exists': False}}
+            ]
+        })
+    if status == 'Без статусу':
+        missing_conditions.append({
+            '$or': [
+                {'status': {'$in': ['', None]}},
+                {'status': {'$exists': False}}
+            ]
+        })
+    elif status:
+        filter_criteria['status'] = status
+    if agent_id and agent_id != '__NO_AGENT__':
+        filter_criteria['agent_id'] = agent_id
+    elif agent_id == '__NO_AGENT__':
+        filter_criteria['agent_id'] = {'$in': ['', None]}
+
+    if missing_conditions:
+        if filter_criteria:
+            filter_criteria = {'$and': [filter_criteria, *missing_conditions]}
+        elif len(missing_conditions) == 1:
+            filter_criteria = missing_conditions[0]
+        else:
+            filter_criteria = {'$and': missing_conditions}
+
+    return filter_criteria
+
+
+def _sort_clients_documents(documents, sort_by, reverse_sort):
+    if not sort_by:
+        return documents
+
+    field_type = type(
+        next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
+
+    def sort_key(x):
+        value = x.get(sort_by)
+        if value in [None, '', [], {}]:
+            if issubclass(field_type, datetime.datetime):
+                return datetime.datetime.min if reverse_sort else datetime.datetime.max
+            return float('-inf') if reverse_sort else float('inf')
+        return value
+
+    return sorted(documents, key=sort_key, reverse=reverse_sort)
+
+
+def _format_export_date(value):
+    if not value:
+        return ''
+    if isinstance(value, datetime.datetime):
+        return value.strftime('%d.%m.%Y')
+    return str(value)
+
+
+def _get_agent_name_lookup(documents):
+    agent_ids = set()
+    for document in documents:
+        agent_id = document.get('agent_id')
+        if not agent_id:
+            continue
+        if isinstance(agent_id, ObjectId):
+            agent_ids.add(agent_id)
+            continue
+        try:
+            agent_ids.add(ObjectId(str(agent_id)))
+        except Exception:
+            continue
+
+    if not agent_ids:
+        return {}
+
+    agents = agents_collection.find({'_id': {'$in': list(agent_ids)}}, {'name': 1})
+    return {str(agent['_id']): agent.get('name', '') for agent in agents}
+
+
+def _build_clients_export_rows(documents):
+    agent_lookup = _get_agent_name_lookup(documents)
+    headers = [
+        'code',
+        'Користувач',
+        'Логін',
+        'Телефон',
+        'Статус',
+        'Дата реєстрації',
+        'Дата створення',
+        'Коментар',
+        'Джерело',
+        'Агент',
+    ]
+    rows = []
+    for document in documents:
+        agent_id = document.get('agent_id')
+        agent_key = str(agent_id) if agent_id is not None else ''
+        agent_name = agent_lookup.get(agent_key, '')
+        rows.append([
+            document.get('code', ''),
+            document.get('short_name', ''),
+            document.get('login', ''),
+            document.get('telephone', ''),
+            document.get('status', ''),
+            _format_export_date(document.get('register_date')),
+            _format_export_date(document.get('create_date')),
+            document.get('comment', ''),
+            document.get('source', ''),
+            agent_name,
+        ])
+    return headers, rows
+
+
+def _build_clients_export_response(documents, export_format):
+    headers, rows = _build_clients_export_rows(documents)
+
+    if export_format == 'csv':
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(headers)
+        writer.writerows(rows)
+        content = buffer.getvalue().encode('utf-8-sig')
+        response = Response(content, content_type='text/csv; charset=utf-8')
+        response.headers['Content-Disposition'] = 'attachment; filename=clients_export.csv'
+        return response
+
+    if export_format == 'xlsx':
+        try:
+            from openpyxl import Workbook
+        except ImportError as exc:
+            raise RuntimeError('openpyxl is required for xlsx export') from exc
+
+        buffer = io.BytesIO()
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = 'Clients'
+        worksheet.append(headers)
+        for row in rows:
+            worksheet.append(row)
+        workbook.save(buffer)
+        response = Response(
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response.headers['Content-Disposition'] = 'attachment; filename=clients_export.xlsx'
+        return response
+
+    return jsonify({'message': 'Invalid export format'}), 400
 
 
 @application.after_request
@@ -243,22 +460,6 @@ def clients():
     page = data.get('page', 1)
     per_page = data.get('per_page', 10)
 
-    # Extract filter parameters from the request data
-    keyword = data.get('keyword')
-    comment = data.get('comment')
-    code = data.get('code')
-    name = data.get('name')
-    telephone = data.get('telephone')
-    email = data.get('email')
-    register_date_start = data.get('register_date_start')
-    register_date_end = data.get('register_date_end')
-    create_date_start = data.get('create_date_start')
-    create_date_end = data.get('create_date_end')
-    stream = data.get('stream')  # New stream filter
-    source = data.get('source')
-    status = data.get('status')
-    agent_id = data.get('agent_id')
-
     if not access_token:
         return jsonify({'message': 'Access token is missing'}), 401
 
@@ -268,85 +469,7 @@ def clients():
         # Retrieve user information based on the username, if needed
 
         # Construct the filter criteria for the MongoDB query
-        filter_criteria = {}
-        missing_conditions = []
-        if keyword:
-            clients_collection.create_index([("$**", "text")])
-            filter_criteria['$text'] = {'$search': keyword}
-        if comment:
-            regex_pattern = f'.*{re.escape(comment)}.*'
-            filter_criteria['comment'] = {'$regex': regex_pattern, '$options': 'i'}
-        if code:
-            regex_pattern = f'.*{re.escape(code)}.*'
-            filter_criteria['code'] = {'$regex': regex_pattern, '$options': 'i'}
-        if name:
-            clients_collection.create_index([("$**", "text")])
-            filter_criteria['$text'] = {'$search': name}
-        if telephone:
-            regex_pattern = f'.*{re.escape(telephone)}.*'
-            filter_criteria['telephone'] = {'$regex': regex_pattern, '$options': 'i'}
-        if email:
-            regex_pattern = f'.*{re.escape(email)}.*'
-            filter_criteria['login'] = {'$regex': regex_pattern, '$options': 'i'}
-        if register_date_start or register_date_end:
-            try:
-                start_date = datetime.datetime.strptime(register_date_start, '%d-%m-%Y')
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(register_date_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['register_date'] = {"$gte": start_date, "$lte": end_date}
-        if create_date_start or create_date_end:
-            try:
-                start_date = datetime.datetime.strptime(create_date_start, '%d-%m-%Y')
-            except TypeError:
-                start_date = datetime.datetime.strptime('01-01-2000', '%d-%m-%Y')
-            try:
-                end_date = datetime.datetime.strptime(create_date_end, '%d-%m-%Y')
-            except TypeError:
-                end_date = datetime.datetime.strptime('01-01-3000', '%d-%m-%Y')
-            filter_criteria['create_date'] = {"$gte": start_date, "$lte": end_date}
-
-        if stream:
-            # Find auctions that match the stream
-            auctions = protocols_all_collection.find(
-                {'stream': {'$regex': f'.*{re.escape(stream)}.*', '$options': 'i'}})
-            auction_client_codes = [auction['code'] for auction in auctions]
-
-            # Filter clients based on these auction codes
-            filter_criteria['code'] = {'$in': auction_client_codes}
-        if source in ['Внутрішня', 'Зовнішня']:
-            filter_criteria['source'] = source
-        elif source == 'Без джерела':
-            missing_conditions.append({
-            '$or': [
-                {'source': {'$in': ['', None]}},
-                {'source': {'$exists': False}}
-            ]
-            })
-        if status == 'Без статусу':
-            missing_conditions.append({
-            '$or': [
-                {'status': {'$in': ['', None]}},
-                {'status': {'$exists': False}}
-            ]
-            })
-        elif status:
-            filter_criteria['status'] = status
-        if agent_id and agent_id != '__NO_AGENT__':
-            filter_criteria['agent_id'] = agent_id
-        elif agent_id == '__NO_AGENT__':
-            filter_criteria['agent_id'] = {'$in': ['', None]}
-
-        if missing_conditions:
-            if filter_criteria:
-                filter_criteria = {'$and': [filter_criteria, *missing_conditions]}
-            elif len(missing_conditions) == 1:
-                filter_criteria = missing_conditions[0]
-            else:
-                filter_criteria = {'$and': missing_conditions}
+        filter_criteria = _build_clients_filter_criteria(data)
 
         total_clients = clients_collection.count_documents(filter_criteria)
         skip = (page - 1) * per_page
@@ -354,22 +477,8 @@ def clients():
         documents = list(clients_collection.find(filter_criteria).sort(sort_criteria).skip(skip).limit(per_page))
 
         sort_by = data.get('sort_by')
-        if sort_by:
-            reverse_sort = data.get('reverse_sort', False)
-
-            field_type = type(
-                next((item for item in documents if item.get(sort_by) not in [None, '', [], {}]), {}).get(sort_by))
-
-            def sort_key(x):
-                value = x.get(sort_by)
-                if value in [None, '', [], {}]:
-                    if issubclass(field_type, datetime.datetime):
-                        return datetime.datetime.min if reverse_sort else datetime.datetime.max
-                    else:
-                        return float('-inf') if reverse_sort else float('inf')
-                return value
-
-            documents = sorted(documents, key=sort_key, reverse=reverse_sort)
+        reverse_sort = data.get('reverse_sort', False)
+        documents = _sort_clients_documents(documents, sort_by, reverse_sort)
 
         start_range = skip + 1
         end_range = min(skip + per_page, total_clients)
@@ -379,6 +488,32 @@ def clients():
             ensure_ascii=False).encode('utf-8'),
                             content_type='application/json;charset=utf-8')
         return response, 200
+    except jwt.ExpiredSignatureError:
+        return jsonify({'message': 'Token has expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'message': 'Invalid token'}), 401
+
+
+@application.route('/clients_export', methods=['POST'])
+def clients_export():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    export_format = (data.get('format') or data.get('export_format') or '').lower()
+
+    if not access_token:
+        return jsonify({'message': 'Access token is missing'}), 401
+
+    if export_format not in ['csv', 'xlsx']:
+        return jsonify({'message': 'Invalid export format'}), 400
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+        filter_criteria = _build_clients_filter_criteria(data)
+        sort_by = data.get('sort_by')
+        reverse_sort = data.get('reverse_sort', False)
+        documents = list(clients_collection.find(filter_criteria).sort([('create_date', DESCENDING)]))
+        documents = _sort_clients_documents(documents, sort_by, reverse_sort)
+        return _build_clients_export_response(documents, export_format)
     except jwt.ExpiredSignatureError:
         return jsonify({'message': 'Token has expired'}), 401
     except jwt.InvalidTokenError:
