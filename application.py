@@ -13,6 +13,12 @@ application = Flask(__name__)
 
 ALLOWED_ORIGINS = {
     "https://galcontract-crm-front-ce5m4.ondigitalocean.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8080",
 }
 
 CORS(
@@ -40,6 +46,18 @@ streams_collection = db['streams']
 procuringEntity_auctions_collection = db['procuringEntity_auctions']
 comments_collection = db['comments']
 agents_collection = db['agents']
+
+ALLOWED_CLIENT_STATUSES = [
+    '',
+    'Недозвін',
+    'Надіслано email',
+    'Передзвонити',
+    'В роботі з менеджером',
+    'Клієнт завершує сам',
+    'Очікуємо дані/документи',
+    'Реєстрацію завершено',
+    'Неактуально / відмова',
+]
 
 # --- Mongo indexes (run once on startup) ---
 # Дати/сортування
@@ -238,6 +256,7 @@ def clients():
     create_date_end = data.get('create_date_end')
     stream = data.get('stream')  # New stream filter
     source = data.get('source')
+    status = data.get('status')
     agent_id = data.get('agent_id')
 
     if not access_token:
@@ -250,6 +269,7 @@ def clients():
 
         # Construct the filter criteria for the MongoDB query
         filter_criteria = {}
+        missing_conditions = []
         if keyword:
             clients_collection.create_index([("$**", "text")])
             filter_criteria['$text'] = {'$search': keyword}
@@ -300,14 +320,33 @@ def clients():
         if source in ['Внутрішня', 'Зовнішня']:
             filter_criteria['source'] = source
         elif source == 'Без джерела':
-            filter_criteria['$or'] = [
+            missing_conditions.append({
+            '$or': [
                 {'source': {'$in': ['', None]}},
                 {'source': {'$exists': False}}
             ]
+            })
+        if status == 'Без статусу':
+            missing_conditions.append({
+            '$or': [
+                {'status': {'$in': ['', None]}},
+                {'status': {'$exists': False}}
+            ]
+            })
+        elif status:
+            filter_criteria['status'] = status
         if agent_id and agent_id != '__NO_AGENT__':
             filter_criteria['agent_id'] = agent_id
         elif agent_id == '__NO_AGENT__':
             filter_criteria['agent_id'] = {'$in': ['', None]}
+
+        if missing_conditions:
+            if filter_criteria:
+                filter_criteria = {'$and': [filter_criteria, *missing_conditions]}
+            elif len(missing_conditions) == 1:
+                filter_criteria = missing_conditions[0]
+            else:
+                filter_criteria = {'$and': missing_conditions}
 
         total_clients = clients_collection.count_documents(filter_criteria)
         skip = (page - 1) * per_page
@@ -455,6 +494,43 @@ def update_client_agent():
         return response
     except Exception:
         response = jsonify({'message': 'Invalid agent id'}), 400
+        return response
+
+
+@application.route('/update_client_status', methods=['POST'])
+def update_client_status():
+    data = request.get_json()
+    access_token = data.get('access_token')
+    user_id = data.get('id')
+    status = data.get('status', '')
+
+    if not access_token:
+        response = jsonify({'message': 'Access token is missing'}), 401
+        return response
+
+    try:
+        jwt.decode(access_token, application.config['SECRET_KEY'], algorithms=['HS256'])
+
+        if user_id is None:
+            response = jsonify({'message': 'User ID is missing'}), 400
+            return response
+
+        if status not in ALLOWED_CLIENT_STATUSES:
+            response = jsonify({'message': 'Invalid status value'}), 400
+            return response
+
+        result = clients_collection.update_one({'id': user_id}, {'$set': {'status': status}})
+        if result.matched_count == 1:
+            response = jsonify({'message': 'Status updated successfully'}), 200
+        else:
+            response = jsonify({'message': 'User not found'}), 404
+
+        return response
+    except jwt.ExpiredSignatureError:
+        response = jsonify({'message': 'Token has expired'}), 401
+        return response
+    except jwt.InvalidTokenError:
+        response = jsonify({'message': 'Invalid token'}), 401
         return response
 
 
